@@ -1,0 +1,165 @@
+---
+title: 'Machine Learning Classification: an example with barbell lifts'
+author: "Marc Belzunces"
+date: "25 March 2016"
+output: html_document
+---
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of the project is to predict the manner in which they did the exercise using any of the other variables to predict with.
+
+### 1. Exploratory Data Analysis and selection of variables
+
+First, we read the data. We hide the results due to constrains of space in the report:
+
+```{r, results='hide'}
+train.data <- read.csv("pml-training.csv")
+test.data <- read.csv("pml-testing.csv")
+dim(train.data)
+dim(test.data)
+summary(train.data)
+summary(test.data)
+str(train.data)
+str(test.data)
+```
+
+As there are several columns with NA and blank cells, we reload the data specifying the NA values:
+
+```{r}
+train.data <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+test.data <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+dim(train.data)
+dim(test.data)
+```
+
+As we pointed out before, there are a lot of variables (columns) containing mainly NA values. We exclude variables with more than 95% of NA values.
+
+```{r}
+
+#Training data
+train.data.na = is.na(train.data)
+train.na.columns = which(colSums(train.data.na) > 19622*0.95)
+train.data.clean = train.data[, -train.na.columns]
+dim(train.data.clean)
+
+#Test data
+test.data.na = is.na(test.data)
+test.na.columns = which(colSums(test.data.na) > 20*0.95)
+test.data.clean = test.data[, -test.na.columns]
+dim(test.data.clean)
+```
+
+Now, we select sensor related columns, in addition to the *classe* variable in *training* dataset (which is not present in *testing* dataset):
+
+```{r}
+
+#Training data
+sensor.train.columns = grep(pattern = "_belt|_arm|_dumbbell|_forearm", names(train.data.clean))
+length(sensor.train.columns)
+  
+final.train.data <- train.data.clean[, c(sensor.train.columns,60)]
+dim(final.train.data)
+table(complete.cases(final.train.data))
+
+#Test data
+sensor.test.columns = grep(pattern = "_belt|_arm|_dumbbell|_forearm", names(test.data.clean))
+length(sensor.test.columns)
+  
+final.test.data <- test.data.clean[, sensor.test.columns]
+dim(final.test.data)
+table(complete.cases(final.test.data))
+  
+```
+
+So we have 52 predictor variables, with no NA values. Now we can perform the Machine Learning.
+
+### 2. Machine Learning
+
+#### 2.1. Training data for the model
+
+Although the datasets originally provided are called *training* and *testing*, the *testing* doesn't contain the *classe* variable, so we can't validate the results of machine learning in the *testing* dataset. We followed the common procedure of the course considering the *training* dataset as the complete dataset and splitting it into a training dataset and a testing dataset:
+
+```{r}
+
+suppressMessages(library(caret))
+set.seed(888)
+
+data <- final.train.data
+inTrain <- createDataPartition(y=data$classe, p=0.75, list=FALSE)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+```
+
+#### 2.2 Model selection
+
+We selected the Random Forest (rf) and Gradient Boosting (gbm) for comparison to obtain the best model. A 10-fold **cross validation** is employed during the model building to reduce the overfitting:
+
+
+```{r}
+
+modelControl <- trainControl(method="cv", number = 10)
+
+```
+
+First, we use Random Forest. In cross validation we use Kappa parameter, as we are trying to predict a factor (categorical) variable, and it is generally thought to be a more robust measure than simple percent agreement calculation (accuracy): 
+
+```{r, cache=TRUE}
+suppressMessages(library(randomForest))
+
+set.seed(999)
+model.rf <- train(classe~., data=training, method="rf", metric="Kappa", trControl=modelControl)
+model.rf
+
+```
+
+There are slight differences in kappa and accuracy parameters. The cross validation selected mtry=27, that is, 27 randomly sampled variables in each split to select the optimal model.
+
+Now we use Gradient Boosting (gbm):
+
+```{r, cache=TRUE}
+
+suppressMessages(library(gbm))
+set.seed(999)
+model.gbm <- train(classe~., data=training, method="gbm", metric="Kappa", trControl=modelControl,verbose=FALSE)
+model.gbm
+
+```
+
+At the end of the text there are the parameters selected according to the cross validation in the gbm models. Here, in contrast with random forest, there are significant diferences in values of Kappa and Accuracy parameters.
+
+Finally, we compared the two models to select which is the best model, using the *resamples* function:
+
+```{r}
+comparison <- resamples(list(rf=model.rf, gbm=model.gbm))
+summary(comparison)
+library(lattice)
+bwplot(comparison, metric="Kappa", main= "RF vs GBM Kappa parameters")
+```
+
+As the boxplot and the summary show, Random Forest has a better Kappa parameter than the Gradient Boosting, so we choose this model.
+
+#### 2.3 Validation of the random forest model and prediction
+
+We applied the selected random forest model to the *testing* data to validate the model, using the *confusionMatrix* function:
+
+```{r}
+suppressMessages(library(randomForest))
+prediction.rf <- predict(model.rf, newdata=testing)
+confusionMatrix(prediction.rf,testing$classe)
+
+```
+
+Accuracy of the model is 0.995, with a Kappa value of 0.994, so the model is valid with the testing data.
+
+### 3. Results
+
+Now, with this model we can predict the result for the original testing dataset obtained in the exploratory data analysis:
+
+```{r}
+prediction.testing <- predict(model.rf, newdata=final.test.data)
+as.data.frame(prediction.testing)
+```
+
